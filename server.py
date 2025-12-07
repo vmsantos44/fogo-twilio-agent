@@ -149,6 +149,16 @@ AGENT_TOOLS = [
             },
             "required": ["question"]
         }
+    },
+    {
+        "type": "function",
+        "name": "transfer_call",
+        "description": "Transfer the call to a human team member. Use this when: the caller requests to speak to a person, verification fails multiple times, or you cannot help with their request.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
     }
 ]
 
@@ -431,6 +441,42 @@ async def search_knowledge_base(question: str):
         print(f"Knowledge base error: {e}")
         return {"found": False, "answer": "I'm having trouble with the knowledge base."}
 
+async def transfer_to_human(call_sid: str):
+    """Transfer the current call to a human agent"""
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    transfer_number = os.getenv("TRANSFER_NUMBER", "+13072221996")
+    
+    if not all([account_sid, auth_token, call_sid]):
+        print("❌ Missing Twilio credentials or CallSid for transfer")
+        return {"success": False, "message": "Unable to transfer - missing configuration"}
+    
+    # TwiML to dial the transfer number
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say>Please hold while I connect you to a team member.</Say>
+    <Dial>{transfer_number}</Dial>
+</Response>"""
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls/{call_sid}.json",
+                auth=(account_sid, auth_token),
+                data={"Twiml": twiml}
+            )
+            
+            if response.status_code == 200:
+                print(f"✅ Call {call_sid} transferred to {transfer_number}")
+                return {"success": True, "message": f"Transferring to team member"}
+            else:
+                print(f"❌ Transfer failed: {response.status_code} - {response.text}")
+                return {"success": False, "message": "Transfer failed"}
+                
+    except Exception as e:
+        print(f"❌ Transfer error: {e}")
+        return {"success": False, "message": str(e)}
+
 
 # ============================================
 # TWILIO WEBHOOK ENDPOINTS
@@ -676,6 +722,8 @@ async def media_stream(websocket: WebSocket):
                             )
                         elif name == "search_knowledge_base":
                             result = await search_knowledge_base(args.get("question", ""))
+                        elif name == "transfer_call":
+                            result = await transfer_to_human(call_sid)
                         else:
                             result = {"error": f"Unknown function: {name}"}
                         
